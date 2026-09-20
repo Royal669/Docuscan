@@ -1221,23 +1221,55 @@ const ImageAdjust = {
     this.render();
   },
   openCropSheet(){
-    const c=this.crop;
-    const html = `<h3>Crop</h3><div class="sub">Trim each edge by a percentage</div>
-      <div class="field"><label>Top: <span id="cvTop">${Math.round(c.top*100)}</span>%</label><input type="range" id="ctTop" min="0" max="45" value="${Math.round(c.top*100)}"></div>
-      <div class="field"><label>Bottom: <span id="cvBottom">${Math.round(c.bottom*100)}</span>%</label><input type="range" id="ctBottom" min="0" max="45" value="${Math.round(c.bottom*100)}"></div>
-      <div class="field"><label>Left: <span id="cvLeft">${Math.round(c.left*100)}</span>%</label><input type="range" id="ctLeft" min="0" max="45" value="${Math.round(c.left*100)}"></div>
-      <div class="field"><label>Right: <span id="cvRight">${Math.round(c.right*100)}</span>%</label><input type="range" id="ctRight" min="0" max="45" value="${Math.round(c.right*100)}"></div>
-      <button class="btn btn-primary" id="ctApply">Apply crop</button>`;
-    const sheet=Overlay.sheet(html);
-    ['Top','Bottom','Left','Right'].forEach(k=>{
-      sheet.querySelector('#ct'+k).oninput=(e)=>{ sheet.querySelector('#cv'+k).textContent=e.target.value; };
+    const stageEl = this.canvas.closest('.fs-stage');
+    const canvasRect = this.canvas.getBoundingClientRect();
+    const stageRect = stageEl.getBoundingClientRect();
+    const box = { left: canvasRect.left - stageRect.left, top: canvasRect.top - stageRect.top, width: canvasRect.width, height: canvasRect.height };
+    const c = this.crop;
+    let sel = { x: box.width*c.left, y: box.height*c.top, w: box.width*(1-c.left-c.right), h: box.height*(1-c.top-c.bottom) };
+    const overlay=document.createElement('div');
+    overlay.id='iaCropOverlay';
+    overlay.style.cssText=`position:absolute;left:${box.left}px;top:${box.top}px;width:${box.width}px;height:${box.height}px;z-index:20;`;
+    overlay.innerHTML = `
+      <div id="iaCropRect" style="position:absolute;border:2px solid #fff;box-shadow:0 0 0 2000px rgba(0,0,0,.55);touch-action:none;">
+        ${['tl','tr','bl','br'].map(h=>`<div class="iaHandle" data-h="${h}" style="position:absolute;${h.includes('t')?'top:-14px;':'bottom:-14px;'}${h.includes('l')?'left:-14px;':'right:-14px;'}width:28px;height:28px;background:var(--brass);border:2px solid #fff;border-radius:50%;touch-action:none;"></div>`).join('')}
+      </div>
+      <div style="position:absolute;top:8px;left:0;right:0;display:flex;gap:8px;justify-content:center;">
+        <button id="iaCropCancel" class="btn btn-outline btn-sm" style="width:auto;color:#fff;border-color:rgba(255,255,255,.4);background:rgba(0,0,0,.5);">Cancel</button>
+        <button id="iaCropApply" class="btn btn-brass btn-sm" style="width:auto;">Apply crop</button>
+      </div>`;
+    stageEl.appendChild(overlay);
+    const rectEl = overlay.querySelector('#iaCropRect');
+    const paint=()=>{ rectEl.style.left=sel.x+'px'; rectEl.style.top=sel.y+'px'; rectEl.style.width=sel.w+'px'; rectEl.style.height=sel.h+'px'; };
+    paint();
+    const minSize=40;
+    overlay.querySelectorAll('.iaHandle').forEach(h=>{
+      h.addEventListener('pointerdown', (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        try{ h.setPointerCapture(e.pointerId); }catch(err){}
+        const startX=e.clientX, startY=e.clientY, startSel={...sel}, which=h.dataset.h;
+        const onMove=(ev)=>{
+          const dx=ev.clientX-startX, dy=ev.clientY-startY;
+          let {x,y,w,h:hh}=startSel;
+          if(which==='tl'){ x=startSel.x+dx; y=startSel.y+dy; w=startSel.w-dx; hh=startSel.h-dy; }
+          if(which==='tr'){ y=startSel.y+dy; w=startSel.w+dx; hh=startSel.h-dy; }
+          if(which==='bl'){ x=startSel.x+dx; w=startSel.w-dx; hh=startSel.h+dy; }
+          if(which==='br'){ w=startSel.w+dx; hh=startSel.h+dy; }
+          x=Math.max(0,Math.min(x, box.width-minSize));
+          y=Math.max(0,Math.min(y, box.height-minSize));
+          w=Math.max(minSize, Math.min(w, box.width-x));
+          hh=Math.max(minSize, Math.min(hh, box.height-y));
+          sel={x,y,w,h:hh}; paint();
+        };
+        const onUp=()=>{ window.removeEventListener('pointermove',onMove); window.removeEventListener('pointerup',onUp); };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+      });
     });
-    sheet.querySelector('#ctApply').onclick=()=>{
-      this.crop = {
-        top:+sheet.querySelector('#ctTop').value/100, bottom:+sheet.querySelector('#ctBottom').value/100,
-        left:+sheet.querySelector('#ctLeft').value/100, right:+sheet.querySelector('#ctRight').value/100
-      };
-      sheet.remove(); this.render();
+    overlay.querySelector('#iaCropCancel').onclick=()=>overlay.remove();
+    overlay.querySelector('#iaCropApply').onclick=()=>{
+      this.crop = { left: sel.x/box.width, top: sel.y/box.height, right: 1-(sel.x+sel.w)/box.width, bottom: 1-(sel.y+sel.h)/box.height };
+      overlay.remove(); this.render();
     };
   }
 };
@@ -2007,8 +2039,7 @@ const AskAI = {
   }
 };
 
-/* Register the service worker (enables Chrome's real "Install app" prompt,
-   which the claude.ai preview link cannot offer). Safe to skip if unsupported. */
+/* Register the service worker (enables Chrome's real "Install app" prompt). */
 if('serviceWorker' in navigator){
   window.addEventListener('load', ()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); });
 }
